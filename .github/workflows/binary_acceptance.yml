@@ -45,6 +45,9 @@ jobs:
           New-Item (Split-Path $sentinel) -ItemType Directory -Force | Out-Null
           'Synthetic acceptance media sentinel' | Set-Content $sentinel
           $sentinelHash = (Get-FileHash $sentinel).Hash
+          # MainWindowHandle excludes hidden windows. Observe HWND/title directly
+          # because the acceptance helper intentionally starts apps hidden.
+          Add-Type -TypeDefinition 'using System; using System.Text; using System.Runtime.InteropServices; public static class WindowProbe { delegate bool Visitor(IntPtr h, IntPtr p); [DllImport("user32.dll")] static extern bool EnumWindows(Visitor v, IntPtr p); [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid); [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n); public static bool Ready(int[] ids) { bool found=false; EnumWindows((h,p)=>{ uint id; GetWindowThreadProcessId(h,out id); if(Array.IndexOf(ids,(int)id)>=0) { var title=new StringBuilder(512); GetWindowText(h,title,512); if(title.ToString()=="MT Screen Recorder") found=true; } return true; },IntPtr.Zero); return found; } }'
           function Run-Installer([string]$log) {
             $p = Start-Process $env:SETUP_PATH -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"") -PassThru -Wait -WindowStyle Hidden
             if ($p.ExitCode -ne 0) { throw "Installer exit $($p.ExitCode)" }
@@ -70,14 +73,15 @@ jobs:
                 # The Windows PyInstaller bootloader may own a child GUI process.
                 $children = @(Get-CimInstance Win32_Process | Where-Object { $_.ParentProcessId -in $ownedIds -and $_.ExecutablePath -eq $exe } | Select-Object -ExpandProperty ProcessId)
                 $ownedIds = @($ownedIds + $children | Select-Object -Unique)
-                $windows = @(Get-Process -Id $ownedIds -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 })
-              } until ($windows.Count -gt 0 -or (Get-Date) -gt $deadline)
+                $windowReady = [WindowProbe]::Ready([int[]]$ownedIds)
+              } until ($windowReady -or (Get-Date) -gt $deadline)
               Get-Process -Id $ownedIds -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,MainWindowHandle,MainWindowTitle | Out-String | Add-Content "$qa/startup.log"
-              if ($windows.Count -eq 0) { throw 'Application window did not appear' }
+              if (!$windowReady) { throw 'Application window did not initialize' }
               Start-Sleep -Seconds 3
               $p.Refresh()
               if ($p.HasExited) { throw 'Application crashed after startup' }
               if (!(Test-Path "$data/Logs/app.log")) { throw 'Application log missing' }
+              if (Get-ChildItem "$data/Logs" -Filter 'crash_*.log') { throw 'Application crash log found' }
             } finally {
               foreach ($ownedId in ($ownedIds | Sort-Object -Descending)) {
                 $owned = Get-Process -Id $ownedId -ErrorAction SilentlyContinue
@@ -93,6 +97,11 @@ jobs:
           $shortcut = Join-Path $env:ProgramData 'Microsoft/Windows/Start Menu/Programs/MT Screen Recorder.lnk'
           if (!(Test-Path $shortcut)) { throw 'Start Menu shortcut missing' }
           'Installer/files/shortcut PASS' | Add-Content "$qa/results.txt"
+          & "$app/_internal/bin/ffmpeg.exe" -version | Set-Content "$qa/ffmpeg.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Embedded FFmpeg failed to execute' }
+          & "$app/_internal/bin/ffprobe.exe" -version | Set-Content "$qa/ffprobe.log"
+          if ($LASTEXITCODE -ne 0) { throw 'Embedded FFprobe failed to execute' }
+          'Installed embedded FFmpeg/FFprobe execution PASS' | Add-Content "$qa/results.txt"
           Test-App "$app/MT Screen Recorder.exe"
           Assert-Preserved
           'Installed EXE startup with system-only PATH PASS' | Add-Content "$qa/results.txt"
