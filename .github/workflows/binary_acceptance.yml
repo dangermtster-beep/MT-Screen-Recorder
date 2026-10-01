@@ -1,0 +1,114 @@
+name: Published binary acceptance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - name: Download and verify published binaries
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $qa = Join-Path $env:RUNNER_TEMP 'binary-acceptance'
+          New-Item $qa -ItemType Directory -Force | Out-Null
+          "QA_ROOT=$qa" >> $env:GITHUB_ENV
+          gh release download --repo $env:GITHUB_REPOSITORY --dir $qa --pattern '*.exe' --pattern '*.zip' --pattern 'latest.json'
+          if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
+          $manifest = Get-Content "$qa/latest.json" -Raw | ConvertFrom-Json
+          $setup = Join-Path $qa "MT_Screen_Recorder_Setup_$($manifest.version).exe"
+          if ((Get-Item $setup).Length -ne $manifest.file_size) { throw 'Installer size mismatch' }
+          if ((Get-FileHash $setup -Algorithm SHA256).Hash -ne $manifest.sha256) { throw 'Installer hash mismatch' }
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/latest" | ConvertFrom-Json
+          foreach ($asset in $release.assets) {
+            $file = Join-Path $qa $asset.name
+            if (!(Test-Path $file)) { throw "Missing asset: $($asset.name)" }
+            if ($asset.digest -ne "sha256:$((Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant())") { throw "Asset digest mismatch: $($asset.name)" }
+          }
+          "SETUP_PATH=$setup" >> $env:GITHUB_ENV
+          "ZIP_PATH=$(Join-Path $qa "MT_Screen_Recorder_Portable_$($manifest.version).zip")" >> $env:GITHUB_ENV
+          @('Published installer manifest hash/size PASS', 'All GitHub asset digests PASS') | Set-Content "$qa/results.txt"
+      - name: Install, isolated dependency startup, reinstall and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $qa = $env:QA_ROOT
+          $app = Join-Path $env:ProgramFiles 'MT Screen Recorder'
+          $data = Join-Path $env:LOCALAPPDATA 'MT Screen Recorder'
+          New-Item $data -ItemType Directory -Force | Out-Null
+          $config = Join-Path $data 'config.json'
+          '{"config_version":1,"theme":"Neon Dalgalar","update":{"automatic":false},"general":{"start_with_windows":false},"recording":{"recovery_check":false}}' | Set-Content $config -Encoding utf8
+          $sentinel = Join-Path ([Environment]::GetFolderPath('MyVideos')) 'MT Screen Recorder/acceptance-preserve.txt'
+          New-Item (Split-Path $sentinel) -ItemType Directory -Force | Out-Null
+          'Synthetic acceptance media sentinel' | Set-Content $sentinel
+          $sentinelHash = (Get-FileHash $sentinel).Hash
+          function Run-Installer([string]$log) {
+            $p = Start-Process $env:SETUP_PATH -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$log`"") -PassThru -Wait -WindowStyle Hidden
+            if ($p.ExitCode -ne 0) { throw "Installer exit $($p.ExitCode)" }
+          }
+          function Assert-Preserved {
+            if ((Get-Content $config -Raw | ConvertFrom-Json).theme -ne 'Neon Dalgalar') { throw 'Theme was lost' }
+            if (!(Test-Path $sentinel) -or (Get-FileHash $sentinel).Hash -ne $sentinelHash) { throw 'Media sentinel changed' }
+          }
+          function Test-App([string]$exe) {
+            $savedPath = $env:PATH
+            $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+            $p = $null
+            try {
+              $p = Start-Process $exe -PassThru -WindowStyle Hidden
+              $deadline = (Get-Date).AddSeconds(45)
+              do {
+                Start-Sleep -Milliseconds 500
+                $p.Refresh()
+                if ($p.HasExited) { throw "Application exited early: $($p.ExitCode)" }
+              } until ($p.MainWindowHandle -ne 0 -or (Get-Date) -gt $deadline)
+              if ($p.MainWindowHandle -eq 0) { throw 'Application window did not appear' }
+              Start-Sleep -Seconds 3
+              $p.Refresh()
+              if ($p.HasExited) { throw 'Application crashed after startup' }
+              if (!(Test-Path "$data/Logs/app.log")) { throw 'Application log missing' }
+            } finally {
+              if ($p -and !$p.HasExited) { Stop-Process -Id $p.Id -Force; $p.WaitForExit() }
+              $env:PATH = $savedPath
+            }
+          }
+          Run-Installer "$qa/install.log"
+          foreach ($relative in @('MT Screen Recorder.exe','_internal/bin/ffmpeg.exe','_internal/bin/ffprobe.exe','unins000.exe')) {
+            if (!(Test-Path (Join-Path $app $relative))) { throw "Missing installed file: $relative" }
+          }
+          $shortcut = Join-Path $env:ProgramData 'Microsoft/Windows/Start Menu/Programs/MT Screen Recorder.lnk'
+          if (!(Test-Path $shortcut)) { throw 'Start Menu shortcut missing' }
+          'Installer/files/shortcut PASS' | Add-Content "$qa/results.txt"
+          Test-App "$app/MT Screen Recorder.exe"
+          Assert-Preserved
+          'Installed EXE startup with system-only PATH PASS' | Add-Content "$qa/results.txt"
+          Run-Installer "$qa/reinstall.log"
+          Assert-Preserved
+          'Same-version reinstall and data preservation PASS (not a two-version upgrade)' | Add-Content "$qa/results.txt"
+          $p = Start-Process "$app/unins000.exe" -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/LOG=`"$qa/uninstall.log`"") -PassThru -Wait -WindowStyle Hidden
+          if ($p.ExitCode -ne 0) { throw "Uninstaller exit $($p.ExitCode)" }
+          if (Test-Path "$app/MT Screen Recorder.exe") { throw 'Installed EXE still exists' }
+          if (Test-Path $shortcut) { throw 'Shortcut remains after uninstall' }
+          Assert-Preserved
+          'Uninstall and user config/media preservation PASS' | Add-Content "$qa/results.txt"
+          $portable = Join-Path $qa 'portable'
+          Expand-Archive $env:ZIP_PATH $portable
+          $exe = @(Get-ChildItem $portable -Filter 'MT Screen Recorder.exe' -Recurse)
+          if ($exe.Count -ne 1) { throw 'Portable EXE missing or ambiguous' }
+          Test-App $exe[0].FullName
+          Assert-Preserved
+          'Portable EXE startup with system-only PATH PASS' | Add-Content "$qa/results.txt"
+          'LIMITATION: Hosted Windows runner includes development tools; system-only PATH verifies dependency isolation. Physical devices/login and true two-version upgrade remain manual.' | Add-Content "$qa/results.txt"
+          Get-Content "$qa/results.txt" >> $env:GITHUB_STEP_SUMMARY
+      - name: Preserve acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-acceptance-evidence
+          path: |
+            ${{ env.QA_ROOT }}/*.log
+            ${{ env.QA_ROOT }}/results.txt
+            ~/AppData/Local/MT Screen Recorder/Logs/*.log
