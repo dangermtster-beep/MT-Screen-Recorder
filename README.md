@@ -25,6 +25,8 @@ Ayarlar ve loglar `%LOCALAPPDATA%\MT Screen Recorder` altındadır. Yeni kullan�
 
 ## Test durumu / Validation
 
-Yerel kaynak ve paket kontrolleri, gerçek ikinci monitör/ses kaydı ve tema/tek-instance testleri yapıldı. Temiz Windows kurulumu/kaldırması ve iki gerçek sürüm arasında kurulum güncellemesi henüz manuel kabul bekliyor. Ayrıntılar Release notlarında bulunur.
+Yerel kaynak ve paket kontrolleri, gerçek ikinci monitör/ses kaydı ve tema/tek-instance testleri yapıldı. [Canlı Windows paket kabulü](https://github.com/dangermtster-beep/MT-Screen-Recorder/actions/runs/36885612083) geçti: Windows Server 2022 üzerinde kurulum/kaldırma, gömülü motorlar, EXE/ZIP GUI başlangıcı ve test verisinin korunması.
+
+Geliştirici araçları bulunmayan temiz Windows 10/11, gerçek iki sürüm upgrade, farklı fiziksel DPI ve Windows login manuel kabul bekliyor. Kaynak kod yerelde tutulur; bu depo EXE/ZIP dağıtımı, güncelleme manifesti ve kaynak kod kullanmayan paket kabul workflow'u içindir.
 
 This repository distributes application releases. Recording and media processing are local; internet is used for update checks/downloads.
