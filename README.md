@@ -6,13 +6,13 @@ Windows için ücretsiz, filigransız ekran kaydedici. Kayıt ve medya işlemler
 
 [Son sürüm / Latest release](https://github.com/dangermtster-beep/MT-Screen-Recorder/releases/latest)
 
-- **Setup:** `MT_Screen_Recorder_Setup_1.0.3.exe`
-- **Portable:** `MT_Screen_Recorder_Portable_1.0.3.zip`
+- **Setup:** `MT_Screen_Recorder_Setup_1.0.4.exe`
+- **Portable:** `MT_Screen_Recorder_Portable_1.0.4.zip`
 - **Doğrulama:** Setup SHA-256 ve dosya boyutu `latest.json` içindedir.
 
 Windows 10/11 64-bit. Python veya FFmpeg kurulumu gerekmez. Setup yönetici izniyle Program Files altına kurulur. Portable ZIP'i tamamen çıkarıp `MT Screen Recorder.exe` dosyasını çalıştırın.
 
-**1.0.3:** Ekran + webcam (PiP) kayıtlarındaki donma giderildi; kamera desteklemediği çözünürlük/FPS seçilince en yakın desteklenen moda geçer. Kurulumdan önce açık kaydı kaydedip sistem tepsisindeki MT simgesinden **Çıkış** yapın; çalışan uygulama dosyaları kilitleyebilir.
+**1.0.4:** Webcam kayıtlarındaki ses-görüntü kayması (~1,5–2 sn) giderildi; ses ve görüntü senkron. Kurulumdan önce açık kaydı kaydedip sistem tepsisindeki MT simgesinden **Çıkış** yapın; çalışan uygulama dosyaları kilitleyebilir.
 
 ## Özellikler
 
